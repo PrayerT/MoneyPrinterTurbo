@@ -130,6 +130,7 @@
     "Speed and volume are currently handled by the provider defaults": "La velocidad y el volumen están gestionados por los valores predeterminados del proveedor",
     "Hide Log": "Ocultar registro",
     "Hide Basic Settings": "Ocultar configuración básica\n\nOculto, el panel de configuración básica no se mostrará en la página.\n\nSi necesitas mostrarlo de nuevo, establece `hide_config = false` en `config.toml`",
+    "Show Basic Settings": "Mostrar configuración básica",
     "LLM Settings": "**Configuración LLM**",
     "Video Source Settings": "**Configuración de fuente de vídeo**",
     "Click to show API Key management": "Haz clic para mostrar la gestión de API Keys",

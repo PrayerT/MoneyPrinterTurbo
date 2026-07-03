@@ -126,6 +126,7 @@
     "Speed and volume are currently handled by the provider defaults": "Hız ve ses seviyesi şu anda sağlayıcının varsayılanlarıyla yönetilir",
     "Hide Log": "Günlüğü Gizle",
     "Hide Basic Settings": "Temel Ayarları Gizle\n\nGizlendiği takdirde, temel ayarlar paneli sayfada görüntülenmeyecektir.\n\nTekrar görüntülemek için `config.toml` dosyasında `hide_config = false` olarak ayarlayın",
+    "Show Basic Settings": "Temel Ayarları Göster",
     "LLM Settings": "**LLM Ayarları**",
     "Video Source Settings": "**Video Kaynağı Ayarları**",
     "Custom Audio File": "Özel Ses Dosyası",

@@ -128,6 +128,7 @@
     "Speed and volume are currently handled by the provider defaults": "Tốc độ và âm lượng hiện được xử lý theo mặc định của nhà cung cấp",
     "Hide Log": "Ẩn Nhật Ký",
     "Hide Basic Settings": "Ẩn Cài Đặt Cơ Bản\n\nẨn, thanh cài đặt cơ bản sẽ không hiển thị trên trang web.\n\nNếu bạn muốn hiển thị lại, vui lòng đặt `hide_config = false` trong `config.toml`",
+    "Show Basic Settings": "Hiển thị cài đặt cơ bản",
     "LLM Settings": "**Cài Đặt LLM**",
     "Video Source Settings": "**Cài Đặt Nguồn Video**",
     "Click to show API Key management": "Nhấn để hiển thị quản lý API Key",

@@ -130,6 +130,7 @@
     "Speed and volume are currently handled by the provider defaults": "Kecepatan dan volume saat ini ditangani oleh default penyedia",
     "Hide Log": "Sembunyikan Log",
     "Hide Basic Settings": "Sembunyikan Pengaturan Dasar\n\nTersembunyi, panel pengaturan dasar tidak akan ditampilkan di halaman.\n\nJika Anda perlu menampilkannya lagi, silakan atur `hide_config = false` di `config.toml`",
+    "Show Basic Settings": "Tampilkan Pengaturan Dasar",
     "LLM Settings": "**Pengaturan LLM**",
     "Video Source Settings": "**Pengaturan Sumber Video**",
     "Click to show API Key management": "Klik untuk menampilkan manajemen Kunci API",

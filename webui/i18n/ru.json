@@ -130,6 +130,7 @@
     "Speed and volume are currently handled by the provider defaults": "Скорость и громкость сейчас задаются настройками провайдера по умолчанию",
     "Hide Log": "Скрыть журнал",
     "Hide Basic Settings": "Скрыть основные настройки\n\nПанель основных настроек не будет показана на странице.\n\nЧтобы вернуть ее, установите `hide_config = false` в `config.toml`",
+    "Show Basic Settings": "Показать основные настройки",
     "LLM Settings": "**Настройки LLM**",
     "Video Source Settings": "**Источники материалов**",
     "Click to show API Key management": "Показать управление API-ключами",

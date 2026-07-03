@@ -130,6 +130,7 @@
     "Speed and volume are currently handled by the provider defaults": "语速和音量当前使用服务商默认效果",
     "Hide Log": "隐藏日志",
     "Hide Basic Settings": "隐藏基础设置\n\n隐藏后，基础设置面板将不会显示在页面中。\n\n如需要再次显示，请在 `config.toml` 中设置 `hide_config = false`",
+    "Show Basic Settings": "显示基础设置",
     "LLM Settings": "**大模型设置**",
     "Video Source Settings": "**视频源设置**",
     "Click to show API Key management": "点击以显示 API Key 管理功能",

@@ -685,9 +685,18 @@ def get_groq_model_ids(api_key: str, base_url: str) -> list[str]:
         logger.warning(f"failed to fetch groq models: {e}")
         return []
 
-# 创建基础设置折叠框
-if not config.app.get("hide_config", False):
-    with st.expander(tr("Basic Settings"), expanded=st.session_state.get("open_basic_settings", False)):
+# 创建基础设置折叠框。
+# hide_config 会把面板移出常驻显示，但绝不能变成"单向门"：Seedance / 图库 / LLM 的
+# API Key 都在这里填。因此隐藏时仍要留一个重新打开的入口，且"前往"导航(open_basic_settings)
+# 必须能强制把面板渲染出来并展开——否则出片清单里的"前往"按钮点了没反应，Key 永远填不了。
+_want_basic = st.session_state.get("open_basic_settings", False)
+_hide_config = config.app.get("hide_config", False)
+if _hide_config and not _want_basic:
+    # 面板被隐藏时给一个常驻入口，避免 API Key 永远无法填写。
+    if st.button("⚙️ " + tr("Show Basic Settings"), key="reopen_basic_settings"):
+        request_nav("basic")
+if (not _hide_config) or _want_basic:
+    with st.expander(tr("Basic Settings"), expanded=_want_basic):
         config_panels = st.columns(3)
         left_config_panel = config_panels[0]
         middle_config_panel = config_panels[1]
