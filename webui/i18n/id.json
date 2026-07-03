@@ -34,10 +34,10 @@
     "Video Transition Mode": "Mode Transisi Video",
     "None": "Tidak Ada",
     "Shuffle": "Acak",
-    "FadeIn": "FadeIn",
-    "FadeOut": "FadeOut",
-    "SlideIn": "SlideIn",
-    "SlideOut": "SlideOut",
+    "FadeIn": "Memudar Masuk",
+    "FadeOut": "Memudar Keluar",
+    "SlideIn": "Geser Masuk",
+    "SlideOut": "Geser Keluar",
     "Video Ratio": "Rasio Aspek Video",
     "Portrait": "Potret 9:16",
     "Landscape": "Lanskap 16:9",
@@ -209,6 +209,16 @@
     "Cond Local Materials": "Materi lokal diunggah",
     "Cond Source Ready": "Sumber video siap",
     "Go To": "Buka",
-    "Cond Audio Subtitle": "Audio / subtitle siap"
+    "Cond Audio Subtitle": "Audio / subtitle siap",
+    "Chatterbox Base URL": "Base URL Chatterbox",
+    "Groq Model Load Failed": "Tidak dapat memuat daftar model Groq saat ini. Anda tetap bisa memasukkan nama model secara manual — perhatikan bahwa nama itu tidak akan divalidasi sampai proses pembuatan.",
+    "Failed to Generate Video Keywords": "Gagal membuat kata kunci video",
+    "Chatterbox TTS Settings Info": "Pengaturan TTS Chatterbox (self-hosted):\n- Jalankan server Chatterbox yang kompatibel dengan OpenAI (mis. devnen/Chatterbox-TTS-Server atau travisvn/chatterbox-tts-api) dan atur Base URL ke endpoint /v1-nya\n- Voices adalah daftar nama suara yang dipisahkan koma yang disediakan server Anda; tambahkan akhiran -Female atau -Male hanya untuk menandai gender pada dropdown ini\n- Volume Ucapan tidak berlaku untuk Chatterbox (API OpenAI /audio/speech tidak memiliki field volume); gunakan Kecepatan Ucapan sebagai gantinya",
+    "ElevenLabs TTS Settings Info": "Pengaturan TTS ElevenLabs:\n- Dapatkan API key Anda di https://elevenlabs.io/app/settings/api-keys\n- Tandai suara sebagai ★ Favorit di pustaka suara ElevenLabs agar muncul di sini",
+    "Chatterbox Voices": "Suara Chatterbox",
+    "Chatterbox API Key": "Kunci API Chatterbox",
+    "Failed to Generate Video Script": "Gagal membuat naskah video",
+    "Groq Add Api Key Hint": "Tambahkan API key Groq untuk memuat model yang tersedia secara otomatis.",
+    "Chatterbox Model": "Model Chatterbox"
   }
 }

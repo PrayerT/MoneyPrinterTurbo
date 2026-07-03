@@ -320,28 +320,35 @@ def generate_ai_video(task_id: str, params, video_script: str, storyboard: list)
         return None
     sm.state.update_task(task_id, progress=80)
 
-    # 3) 汇总：拼音频 / 拼画面 / 合字幕
-    logger.info("\n\n## [AI] combining audio, video and subtitle")
-    audio_file = _concat_audio([a["audio_path"] for a in shot_audios],
-                               os.path.join(work_dir, "audio.mp3"), work_dir)
-    combined_video = os.path.join(work_dir, "combined-1.mp4")
-    video.concat_video_clips_with_ffmpeg(
-        clip_files=shot_videos, output_file=combined_video,
-        threads=params.n_threads, output_dir=work_dir,
-    )
+    # 3) 汇总：拼音频 / 拼画面 / 合字幕；4) 合成
+    # 与 step1/2 一致：任一步失败都置任务失败并返回 None，交由上层走已本地化的报错，
+    # 避免 ffmpeg 等底层英文异常直接冒泡到 Streamlit 默认异常框（不随语言切换）。
+    try:
+        logger.info("\n\n## [AI] combining audio, video and subtitle")
+        audio_file = _concat_audio([a["audio_path"] for a in shot_audios],
+                                   os.path.join(work_dir, "audio.mp3"), work_dir)
+        combined_video = os.path.join(work_dir, "combined-1.mp4")
+        video.concat_video_clips_with_ffmpeg(
+            clip_files=shot_videos, output_file=combined_video,
+            threads=params.n_threads, output_dir=work_dir,
+        )
 
-    subtitle_path = ""
-    if params.subtitle_enabled:
-        subtitle_path = _build_subtitle(storyboard, shot_audios,
-                                        os.path.join(work_dir, "subtitle.srt"))
+        subtitle_path = ""
+        if params.subtitle_enabled:
+            subtitle_path = _build_subtitle(storyboard, shot_audios,
+                                            os.path.join(work_dir, "subtitle.srt"))
 
-    # 4) 合成（复用现有：字幕叠加 + BGM + 编码）
-    final_video_path = os.path.join(work_dir, "final-1.mp4")
-    logger.info(f"\n\n## [AI] generating final video => {final_video_path}")
-    video.generate_video(
-        video_path=combined_video, audio_path=audio_file,
-        subtitle_path=subtitle_path, output_file=final_video_path, params=params,
-    )
+        # 4) 合成（复用现有：字幕叠加 + BGM + 编码）
+        final_video_path = os.path.join(work_dir, "final-1.mp4")
+        logger.info(f"\n\n## [AI] generating final video => {final_video_path}")
+        video.generate_video(
+            video_path=combined_video, audio_path=audio_file,
+            subtitle_path=subtitle_path, output_file=final_video_path, params=params,
+        )
+    except Exception as e:
+        logger.error(f"[AI] final compose failed: {str(e)}")
+        sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+        return None
     sm.state.update_task(task_id, progress=100)
 
     return {

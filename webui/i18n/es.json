@@ -34,10 +34,10 @@
     "Video Transition Mode": "Modo de transición del vídeo",
     "None": "Ninguna",
     "Shuffle": "Mezclar",
-    "FadeIn": "FadeIn",
-    "FadeOut": "FadeOut",
-    "SlideIn": "SlideIn",
-    "SlideOut": "SlideOut",
+    "FadeIn": "Fundido de entrada",
+    "FadeOut": "Fundido de salida",
+    "SlideIn": "Deslizamiento de entrada",
+    "SlideOut": "Deslizamiento de salida",
     "Video Ratio": "Relación de aspecto del vídeo",
     "Portrait": "Vertical 9:16",
     "Landscape": "Horizontal 16:9",
@@ -209,6 +209,16 @@
     "Cond Local Materials": "Materiales locales subidos",
     "Cond Source Ready": "Fuente de vídeo lista",
     "Go To": "Ir",
-    "Cond Audio Subtitle": "Audio / subtítulos listos"
+    "Cond Audio Subtitle": "Audio / subtítulos listos",
+    "Chatterbox Base URL": "URL base de Chatterbox",
+    "Groq Model Load Failed": "No se puede cargar la lista de modelos de Groq en este momento. Aun así, puedes introducir un nombre de modelo manualmente, pero ten en cuenta que no se validará hasta la generación.",
+    "Failed to Generate Video Keywords": "Error al generar las palabras clave del vídeo",
+    "Chatterbox TTS Settings Info": "Configuración TTS de Chatterbox (autoalojado):\n- Ejecuta un servidor Chatterbox compatible con OpenAI (p. ej. devnen/Chatterbox-TTS-Server o travisvn/chatterbox-tts-api) y establece la URL base en su endpoint /v1\n- Voces es una lista separada por comas de los nombres de voz que expone tu servidor; añade un sufijo -Female o -Male solo para indicar el género en este menú desplegable\n- El Volumen de voz no se aplica en Chatterbox (la API /audio/speech de OpenAI no tiene campo de volumen); usa la Velocidad de voz en su lugar",
+    "ElevenLabs TTS Settings Info": "Configuración TTS de ElevenLabs:\n- Obtén tu clave API en https://elevenlabs.io/app/settings/api-keys\n- Marca voces como ★ Favoritas en la biblioteca de voces de ElevenLabs para que aparezcan aquí",
+    "Chatterbox Voices": "Voces de Chatterbox",
+    "Chatterbox API Key": "Clave API de Chatterbox",
+    "Failed to Generate Video Script": "Error al generar el guion del vídeo",
+    "Groq Add Api Key Hint": "Añade una clave API de Groq para cargar automáticamente los modelos disponibles.",
+    "Chatterbox Model": "Modelo de Chatterbox"
   }
 }

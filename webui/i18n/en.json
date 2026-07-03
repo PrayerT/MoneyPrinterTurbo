@@ -213,6 +213,12 @@
     "Cond Local Materials": "Local materials uploaded",
     "Cond Source Ready": "Video source ready",
     "Go To": "Go",
-    "Cond Audio Subtitle": "Audio / subtitle ready"
+    "Cond Audio Subtitle": "Audio / subtitle ready",
+    "Failed to Generate Video Script": "Failed to generate video script",
+    "Failed to Generate Video Keywords": "Failed to generate video keywords",
+    "Groq Model Load Failed": "Unable to load Groq model list right now. You can still enter a model name manually — note it won't be validated until generation.",
+    "Groq Add Api Key Hint": "Add a Groq API key to load available models automatically.",
+    "ElevenLabs TTS Settings Info": "ElevenLabs TTS Settings:\n- Get your API key at https://elevenlabs.io/app/settings/api-keys\n- Mark voices as ★ Favorite in the ElevenLabs voice library to make them appear here",
+    "Chatterbox TTS Settings Info": "Chatterbox TTS Settings (self-hosted):\n- Run an OpenAI-compatible Chatterbox server (e.g. devnen/Chatterbox-TTS-Server or travisvn/chatterbox-tts-api) and set Base URL to its /v1 endpoint\n- Voices is a comma-separated list of voice names your server exposes; add a -Female or -Male suffix only to label the gender in this dropdown\n- Speech Volume is not applied for Chatterbox (the OpenAI /audio/speech API has no volume field); use Speech Rate instead"
   }
 }

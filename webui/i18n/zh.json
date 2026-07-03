@@ -134,8 +134,8 @@
     "Video Source Settings": "**视频源设置**",
     "Click to show API Key management": "点击以显示 API Key 管理功能",
     "Manage Pexels and Pixabay API Keys": "管理 Pexels 和 Pixabay API Keys",
-    "Pexels API Keys": "Pexels API Keys",
-    "Pixabay API Keys": "Pixabay API Keys",
+    "Pexels API Keys": "Pexels API 密钥列表",
+    "Pixabay API Keys": "Pixabay API 密钥列表",
     "Current Keys:": "当前 Keys:",
     "No Pexels API Keys currently": "暂无 Pexels API Keys",
     "Add Pexels API Key": "新增 Pexels API Key",
@@ -209,6 +209,16 @@
     "Cond Local Materials": "已上传本地素材",
     "Cond Source Ready": "视频来源已就绪",
     "Go To": "前往",
-    "Cond Audio Subtitle": "音频 / 字幕已就绪"
+    "Cond Audio Subtitle": "音频 / 字幕已就绪",
+    "Chatterbox Base URL": "Chatterbox Base URL",
+    "Groq Model Load Failed": "暂时无法加载 Groq 模型列表。你仍可手动输入模型名称，但注意在生成前不会进行校验。",
+    "Failed to Generate Video Keywords": "视频关键词生成失败",
+    "Chatterbox TTS Settings Info": "Chatterbox TTS 设置（自托管）：\n- 运行一个兼容 OpenAI 的 Chatterbox 服务（例如 devnen/Chatterbox-TTS-Server 或 travisvn/chatterbox-tts-api），并将 Base URL 设为其 /v1 端点\n- Voices 为逗号分隔的声音名称列表（需与服务端暴露的名称一致）；仅在需要于此下拉框中标注性别时，才加 -Female 或 -Male 后缀\n- Chatterbox 不支持朗读音量（OpenAI /audio/speech API 没有音量字段），请改用朗读速度",
+    "ElevenLabs TTS Settings Info": "ElevenLabs TTS 设置：\n- 在 https://elevenlabs.io/app/settings/api-keys 获取你的 API Key\n- 在 ElevenLabs 声音库中将声音标记为 ★ 收藏，即可在此显示",
+    "Chatterbox Voices": "Chatterbox 声音",
+    "Chatterbox API Key": "Chatterbox API Key",
+    "Failed to Generate Video Script": "视频文案生成失败",
+    "Groq Add Api Key Hint": "添加 Groq API Key 即可自动加载可用模型。",
+    "Chatterbox Model": "Chatterbox 模型"
   }
 }

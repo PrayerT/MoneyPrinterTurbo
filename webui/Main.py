@@ -1025,7 +1025,9 @@ if not config.app.get("hide_config", False):
                             - **Model Name**: LiteLLM format — `openai/gpt-4o`, `anthropic/claude-sonnet-4-20250514`, `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0`, `gemini/gemini-2.5-flash`. See [full provider list](https://docs.litellm.ai/docs/providers)
                             """
 
-            if tips and config.ui["language"] == "zh":
+            # provider 配置提示为原作者语言的技术性说明(URL/模型 ID 为主)；
+            # 原来仅在中文界面显示，改为所有语言都显示，避免非中文界面整块缺失。
+            if tips:
                 st.info(tips)
 
             st_llm_api_key = st.text_input(
@@ -1060,13 +1062,9 @@ if not config.app.get("hide_config", False):
                             key="groq_model_name_input",
                         )
                         if effective_api_key:
-                            st.caption(
-                                "Unable to load Groq model list right now. You can still enter a model name manually — note it won't be validated until generation."
-                            )
+                            st.caption(tr("Groq Model Load Failed"))
                         else:
-                            st.caption(
-                                "Add a Groq API key to load available models automatically."
-                            )
+                            st.caption(tr("Groq Add Api Key Hint"))
                 else:
                     st_llm_model_name = st.text_input(
                         tr("Model Name"),
@@ -1211,7 +1209,7 @@ with left_panel:
                     custom_system_prompt=params.custom_system_prompt,
                 )
                 if "Error: " in script:
-                    st.error(tr(script))
+                    st.error(f"{tr('Failed to Generate Video Script')}: {script}")
                 else:
                     st.session_state["video_script"] = script
                     if not is_ai_saved:
@@ -1222,7 +1220,7 @@ with left_panel:
                             match_script_order=params.match_materials_to_script,
                         )
                         if "Error: " in terms:
-                            st.error(tr(terms))
+                            st.error(f"{tr('Failed to Generate Video Keywords')}: {terms}")
                         else:
                             st.session_state["video_terms"] = ", ".join(terms)
         params.video_script = st.text_area(
@@ -1243,7 +1241,7 @@ with left_panel:
                         match_script_order=params.match_materials_to_script,
                     )
                     if "Error: " in terms:
-                        st.error(tr(terms))
+                        st.error(f"{tr('Failed to Generate Video Keywords')}: {terms}")
                     else:
                         st.session_state["video_terms"] = ", ".join(terms)
 
@@ -1713,11 +1711,7 @@ with right_panel:
             )
             config.elevenlabs["model_id"] = elevenlabs_model
 
-            st.info(
-                "ElevenLabs TTS Settings:\n"
-                "- Get your API key at https://elevenlabs.io/app/settings/api-keys\n"
-                "- Mark voices as ★ Favorite in the ElevenLabs voice library to make them appear here"
-            )
+            st.info(tr("ElevenLabs TTS Settings Info"))
 
             if elevenlabs_api_key != saved_elevenlabs_api_key:
                 for k in list(st.session_state.keys()):
@@ -1769,17 +1763,7 @@ with right_panel:
             )
             config.chatterbox["voices"] = _parse_chatterbox_voices(chatterbox_voices)
 
-            st.info(
-                "Chatterbox TTS Settings (self-hosted):\n"
-                "- Run an OpenAI-compatible Chatterbox server (e.g. "
-                "devnen/Chatterbox-TTS-Server or travisvn/chatterbox-tts-api) and "
-                "set Base URL to its /v1 endpoint\n"
-                "- Voices is a comma-separated list of voice names your server "
-                "exposes; add a -Female or -Male suffix only to label the gender "
-                "in this dropdown\n"
-                "- Speech Volume is not applied for Chatterbox (the OpenAI "
-                "/audio/speech API has no volume field); use Speech Rate instead"
-            )
+            st.info(tr("Chatterbox TTS Settings Info"))
 
         params.voice_volume = st.selectbox(
             tr("Speech Volume"),

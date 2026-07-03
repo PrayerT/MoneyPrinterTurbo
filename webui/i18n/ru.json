@@ -213,6 +213,12 @@
     "Cond Local Materials": "Локальные материалы загружены",
     "Cond Source Ready": "Источник видео готов",
     "Go To": "Перейти",
-    "Cond Audio Subtitle": "Аудио / субтитры готовы"
+    "Cond Audio Subtitle": "Аудио / субтитры готовы",
+    "Groq Model Load Failed": "Сейчас не удалось загрузить список моделей Groq. Можно ввести название модели вручную — оно будет проверено только при генерации.",
+    "Failed to Generate Video Keywords": "Не удалось сгенерировать ключевые слова видео",
+    "Chatterbox TTS Settings Info": "Настройки TTS Chatterbox (собственный хостинг):\n- Запустите OpenAI-совместимый сервер Chatterbox (например, devnen/Chatterbox-TTS-Server или travisvn/chatterbox-tts-api) и укажите в поле «Базовый URL» его эндпоинт /v1\n- «Голоса» — это список имён голосов через запятую, которые предоставляет ваш сервер; добавляйте суффикс -Female или -Male только для обозначения пола в этом списке\n- Громкость озвучки не применяется для Chatterbox (в OpenAI /audio/speech API нет поля громкости); используйте темп озвучки",
+    "ElevenLabs TTS Settings Info": "Настройки TTS ElevenLabs:\n- Получите API-ключ на https://elevenlabs.io/app/settings/api-keys\n- Отметьте голоса как ★ «Избранное» в библиотеке голосов ElevenLabs, чтобы они появились здесь",
+    "Failed to Generate Video Script": "Не удалось сгенерировать сценарий видео",
+    "Groq Add Api Key Hint": "Добавьте API-ключ Groq, чтобы автоматически загрузить доступные модели."
   }
 }
