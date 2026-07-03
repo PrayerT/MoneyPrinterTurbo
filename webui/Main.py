@@ -175,10 +175,12 @@ def _sanitize_storyboard(rows):
     return shots
 
 
-def generation_conditions(params):
+def generation_conditions(params, uploaded_files=None):
     """出片前置条件清单，对齐三个内容 tab：文案 / 视频来源 / 音频字幕。
     返回 [{label, met, target}, ...]；target 指明去哪里满足：
-    'script'=文案 tab / 'video'=视频 tab / 'audio'=音频字幕 tab / 'basic'=顶部基础设置。"""
+    'script'=文案 tab / 'video'=视频 tab / 'audio'=音频字幕 tab / 'basic'=顶部基础设置。
+    uploaded_files 是本地来源当前在 file_uploader 里已选、尚未落盘的文件，需一并视为就绪，
+    否则会与 run_generation 的落盘时机形成『要生成先满足条件、满足条件先生成一次』的死锁。"""
     conds = []
 
     # 1) 文案：主题或文案二者其一
@@ -204,7 +206,11 @@ def generation_conditions(params):
     elif src == "coverr":
         conds.append({"label": tr("Cond Source Ready"), "met": bool(config.app.get("coverr_api_keys")), "target": "basic"})
     elif src == "local":
-        has_local = bool(st.session_state.get("local_video_materials")) or bool(params.video_materials)
+        has_local = (
+            bool(uploaded_files)
+            or bool(st.session_state.get("local_video_materials"))
+            or bool(params.video_materials)
+        )
         conds.append({"label": tr("Cond Source Ready"), "met": has_local, "target": "video"})
     else:
         conds.append({"label": tr("Cond Source Ready"), "met": True, "target": "video"})
@@ -1955,7 +1961,7 @@ with tab_output:
     st.subheader(tr("Generate and Output"))
     # 出片前置条件清单：满足=绿色✅，不满足=红色❌；全部满足才可点「生成视频」。
     st.write(tr("Checklist before generating"))
-    _conditions = generation_conditions(params)
+    _conditions = generation_conditions(params, uploaded_files)
     # 每个条件对应去哪里满足：'script'/'video' 跳主 tab(按标签文字)，'basic' 展开顶部基础设置。
     _target_tab_label = {
         "script": tr("Tab Script"),
