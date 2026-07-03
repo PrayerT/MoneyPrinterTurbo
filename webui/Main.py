@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import webbrowser
@@ -143,6 +144,336 @@ if "ui_language" not in st.session_state:
 if "local_video_materials" not in st.session_state:
     # 记住用户最近一次已经落盘的本地素材，避免仅修改文案后二次生成时丢失素材列表。
     st.session_state["local_video_materials"] = []
+# AI 分镜管线(video_source == "ai")的两阶段状态。
+if "ai_storyboard" not in st.session_state:
+    st.session_state["ai_storyboard"] = []           # 分镜列表(生成后可被用户编辑)
+if "ai_character_desc" not in st.session_state:
+    st.session_state["ai_character_desc"] = ""        # 主角设定(分析得出,可编辑)
+if "ai_reference_image" not in st.session_state:
+    st.session_state["ai_reference_image"] = ""       # 主角图落盘路径
+
+
+def _sanitize_storyboard(rows):
+    """把(用户编辑过的)分镜表清洗成后端可用格式：丢空行、时长转整数、重排 index。"""
+    shots = []
+    for row in rows or []:
+        row = dict(row)
+        narration = str(row.get("narration", "") or "").strip()
+        visual_prompt = str(row.get("visual_prompt", "") or "").strip()
+        if not narration or not visual_prompt:
+            continue
+        try:
+            duration = int(round(float(row.get("duration", 5))))
+        except (TypeError, ValueError):
+            duration = 5
+        shots.append({
+            "index": len(shots) + 1,
+            "narration": narration,
+            "visual_prompt": visual_prompt,
+            "duration": max(4, min(15, duration)),
+        })
+    return shots
+
+
+def generation_conditions(params):
+    """出片前置条件清单，对齐三个内容 tab：文案 / 视频来源 / 音频字幕。
+    返回 [{label, met, target}, ...]；target 指明去哪里满足：
+    'script'=文案 tab / 'video'=视频 tab / 'audio'=音频字幕 tab / 'basic'=顶部基础设置。"""
+    conds = []
+
+    # 1) 文案：主题或文案二者其一
+    has_subject = bool((params.video_subject or "").strip() or (params.video_script or "").strip())
+    conds.append({"label": tr("Cond Subject"), "met": has_subject, "target": "script"})
+
+    # 2) 视频来源：AI 途径把『分镜/主角图』并进本条(它们是视频来源的一部分)；
+    #    图库/本地则各查各自的 Key 或素材。缺口在哪就把『前往』指向哪。
+    src = params.video_source
+    if src == "ai":
+        has_key = bool((config.app.get("seedance_api_key") or config.app.get("volcengine_api_key") or "").strip())
+        need_ref = config.app.get("seedance_consistency_mode") == "reference_image"
+        has_ref = bool(st.session_state.get("ai_reference_image"))
+        has_story = bool(_sanitize_storyboard(st.session_state.get("ai_storyboard", [])))
+        source_met = has_key and has_story and (has_ref if need_ref else True)
+        # 缺 Key 去基础设置配置，其余(分镜/主角图)都在视频 tab 里搞定。
+        source_target = "basic" if not has_key else "video"
+        conds.append({"label": tr("Cond Source Ready"), "met": source_met, "target": source_target})
+    elif src == "pexels":
+        conds.append({"label": tr("Cond Source Ready"), "met": bool(config.app.get("pexels_api_keys")), "target": "basic"})
+    elif src == "pixabay":
+        conds.append({"label": tr("Cond Source Ready"), "met": bool(config.app.get("pixabay_api_keys")), "target": "basic"})
+    elif src == "coverr":
+        conds.append({"label": tr("Cond Source Ready"), "met": bool(config.app.get("coverr_api_keys")), "target": "basic"})
+    elif src == "local":
+        has_local = bool(st.session_state.get("local_video_materials")) or bool(params.video_materials)
+        conds.append({"label": tr("Cond Source Ready"), "met": has_local, "target": "video"})
+    else:
+        conds.append({"label": tr("Cond Source Ready"), "met": True, "target": "video"})
+
+    # 3) 音频 / 字幕：合并为一条(已选配音即视为就绪，可去音频 tab 微调)
+    audio_met = bool((params.voice_name or "").strip())
+    conds.append({"label": tr("Cond Audio Subtitle"), "met": audio_met, "target": "audio"})
+
+    return conds
+
+
+def render_ai_workspace(params):
+    """
+    AI 分镜工作台（第一步设参数生成分镜 + 第二步编辑分镜表）。渲染进「视频设置」tab。
+    实际出片在「生成 / 输出」tab（点分镜后去那里生成，日志/结果都在那）。
+    """
+    with st.container(border=True):
+        st.subheader(tr("AI Storyboard Workspace"))
+
+        # ---------- 第一步：主角/参数 + 生成分镜 ----------
+        st.markdown("**" + tr("Step 1 Set Character and Params") + "**")
+        col_ref, col_opt = st.columns([1, 1])
+        with col_ref:
+            img_types = ["jpg", "jpeg", "png", "webp", "bmp"]
+            ai_ref = st.file_uploader(
+                tr("Character Reference Image"),
+                type=img_types + [t.upper() for t in img_types],
+                accept_multiple_files=False,
+            )
+            if ai_ref is not None:
+                ref_dir = utils.storage_dir("ai_reference", create=True)
+                safe_name = os.path.basename(ai_ref.name).replace("/", "_").replace("\\", "_")
+                ref_path = os.path.join(ref_dir, f"{ai_ref.file_id}_{safe_name}")
+                with open(ref_path, "wb") as f:
+                    f.write(ai_ref.getbuffer())
+                st.session_state["ai_reference_image"] = ref_path
+            if st.session_state.get("ai_reference_image") and os.path.exists(st.session_state["ai_reference_image"]):
+                st.image(st.session_state["ai_reference_image"], caption=tr("Current Character Image"), width=160)
+                if st.button(tr("Clear Character Image")):
+                    st.session_state["ai_reference_image"] = ""
+                    st.rerun()
+        with col_opt:
+            consistency_options = [
+                (tr("Consistency None"), "none"),
+                (tr("Consistency Reference Image"), "reference_image"),
+                (tr("Consistency Frame Chain"), "frame_chain"),
+            ]
+            saved_mode = config.app.get("seedance_consistency_mode", "reference_image")
+            cm_index = next((i for i, o in enumerate(consistency_options) if o[1] == saved_mode), 1)
+            cm = st.selectbox(
+                tr("Character Consistency"),
+                options=range(len(consistency_options)),
+                format_func=lambda x: consistency_options[x][0],
+                index=cm_index,
+            )
+            config.app["seedance_consistency_mode"] = consistency_options[cm][1]
+
+            res_options = ["480p", "720p", "1080p"]
+            saved_res = config.app.get("seedance_resolution", "720p")
+            res_index = res_options.index(saved_res) if saved_res in res_options else 1
+            config.app["seedance_resolution"] = st.selectbox(
+                tr("Resolution"), options=res_options, index=res_index
+            )
+            st.session_state["ai_character_desc"] = st.text_area(
+                tr("Character Description"),
+                value=st.session_state.get("ai_character_desc", ""),
+                height=68,
+            )
+
+        if st.button(tr("Generate Storyboard"), use_container_width=True, type="primary", key="ai_gen_storyboard"):
+            if not params.video_subject and not params.video_script:
+                st.error(tr("Video Script and Subject Cannot Both Be Empty"))
+                st.stop()
+            params.seedance_reference_image = st.session_state.get("ai_reference_image", "")
+            params.character_description = st.session_state.get("ai_character_desc", "")
+            with st.spinner(tr("Generating Storyboard Spinner")):
+                sb_task_id = str(uuid4())
+                sb_result = tm.start(sb_task_id, params, stop_at="storyboard")
+            if not sb_result or not sb_result.get("storyboard"):
+                st.error(tr("Storyboard Generation Failed"))
+            else:
+                st.session_state["ai_storyboard"] = sb_result["storyboard"]
+                if sb_result.get("character_description"):
+                    st.session_state["ai_character_desc"] = sb_result["character_description"]
+                st.success(tr("Storyboard Generated N Shots").format(n=len(sb_result["storyboard"])))
+                st.rerun()
+
+        # ---------- 第二步：编辑分镜表 ----------
+        if st.session_state.get("ai_storyboard"):
+            st.divider()
+            st.markdown("**" + tr("Step 2 Edit Storyboard Table") + "**")
+            edited = st.data_editor(
+                st.session_state["ai_storyboard"],
+                num_rows="dynamic",
+                use_container_width=True,
+                column_order=["index", "duration", "narration", "visual_prompt"],
+                column_config={
+                    "index": st.column_config.NumberColumn("#", disabled=True, width="small"),
+                    "duration": st.column_config.NumberColumn(tr("Duration (s)"), min_value=4, max_value=15, step=1, width="small"),
+                    "narration": st.column_config.TextColumn(tr("Narration"), width="medium"),
+                    "visual_prompt": st.column_config.TextColumn(tr("Visual Prompt"), width="large"),
+                },
+                key="ai_storyboard_editor",
+            )
+            st.session_state["ai_storyboard"] = list(edited)
+            st.success(tr("Storyboard ready, go to Output tab"))
+
+
+def render_api_key_management():
+    """视频素材图库(Pexels/Pixabay/Coverr) API Key 管理。并入「基础设置」内，
+    因此不再自带 expander（Streamlit 不支持 expander 嵌套）。"""
+    st.write("**" + tr("Manage Pexels, Pixabay and Coverr API Keys") + "**")
+    col1, col2, col3 = st.tabs([
+        tr("Pexels API Keys"),
+        tr("Pixabay API Keys"),
+        tr("Coverr API Keys"),
+    ])
+    providers = [
+        (col1, "pexels_api_keys", "Pexels"),
+        (col2, "pixabay_api_keys", "Pixabay"),
+        (col3, "coverr_api_keys", "Coverr"),
+    ]
+    for col, cfg_key, label in providers:
+        with col:
+            # coverr_api_keys 是较新配置项，老 config 可能缺失，兜底为空列表。
+            if not config.app.get(cfg_key):
+                config.app[cfg_key] = []
+            if config.app[cfg_key]:
+                st.write(tr("Current Keys:"))
+                for key in config.app[cfg_key]:
+                    st.code(key)
+            else:
+                st.info(tr(f"No {label} API Keys currently"))
+
+            new_key = st.text_input(tr(f"Add {label} API Key"), key=f"{label.lower()}_new_key", type="password")
+            if st.button(tr(f"Add {label} API Key"), key=f"{label.lower()}_add_btn"):
+                if new_key and new_key not in config.app[cfg_key]:
+                    config.app[cfg_key].append(new_key)
+                    config.save_config()
+                    st.success(tr(f"{label} API Key added successfully"))
+                elif new_key in config.app[cfg_key]:
+                    st.warning(tr("This API Key already exists"))
+                else:
+                    st.error(tr("Please enter a valid API Key"))
+
+            if config.app[cfg_key]:
+                delete_key = st.selectbox(
+                    tr(f"Select {label} API Key to delete"), config.app[cfg_key], key=f"{label.lower()}_delete_key"
+                )
+                if st.button(tr(f"Delete Selected {label} API Key"), key=f"{label.lower()}_del_btn"):
+                    config.app[cfg_key].remove(delete_key)
+                    config.save_config()
+                    st.success(tr(f"{label} API Key deleted successfully"))
+
+
+def run_generation(params, uploaded_audio_file, uploaded_files):
+    """执行出片：校验 → 落盘上传素材 → tm.start → 实时日志 → 展示结果。
+    渲染进「生成 / 输出」tab，日志与结果都在该 tab 内可见。"""
+    config.save_config()
+    task_id = str(uuid4())
+    if not params.video_subject and not params.video_script:
+        st.error(tr("Video Script and Subject Cannot Both Be Empty"))
+        scroll_to_bottom()
+        st.stop()
+
+    if params.video_source not in ["pexels", "pixabay", "coverr", "local", "ai"]:
+        st.error(tr("Please Select a Valid Video Source"))
+        scroll_to_bottom()
+        st.stop()
+
+    if params.video_source == "ai":
+        # AI 分镜管线：必须先生成分镜；把(编辑后的)分镜/主角图/主角设定塞进 params。
+        sanitized = _sanitize_storyboard(st.session_state.get("ai_storyboard", []))
+        if not sanitized:
+            st.error(tr("Please generate storyboard first"))
+            scroll_to_bottom()
+            st.stop()
+        params.video_storyboard = sanitized
+        params.seedance_reference_image = st.session_state.get("ai_reference_image", "")
+        params.character_description = st.session_state.get("ai_character_desc", "")
+
+    if params.video_source == "pexels" and not config.app.get("pexels_api_keys", ""):
+        st.error(tr("Please Enter the Pexels API Key"))
+        scroll_to_bottom()
+        st.stop()
+
+    if params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
+        st.error(tr("Please Enter the Pixabay API Key"))
+        scroll_to_bottom()
+        st.stop()
+
+    if params.video_source == "coverr" and not config.app.get("coverr_api_keys", ""):
+        st.error(tr("Please Enter the Coverr API Key"))
+        scroll_to_bottom()
+        st.stop()
+
+    if uploaded_audio_file:
+        task_dir = utils.task_dir(task_id)
+        _, audio_ext = os.path.splitext(os.path.basename(uploaded_audio_file.name))
+        audio_ext = audio_ext.lower() or ".mp3"
+        custom_audio_path = os.path.join(task_dir, f"custom-audio{audio_ext}")
+        with open(custom_audio_path, "wb") as f:
+            f.write(uploaded_audio_file.getbuffer())
+        params.custom_audio_file = custom_audio_path
+
+    if uploaded_files:
+        local_videos_dir = utils.storage_dir("local_videos", create=True)
+        params.video_materials = []
+        persisted_local_materials = []
+        for file in uploaded_files:
+            file_path = os.path.join(local_videos_dir, f"{file.file_id}_{file.name}")
+            with open(file_path, "wb") as f:
+                f.write(file.getbuffer())
+                m = MaterialInfo()
+                m.provider = "local"
+                m.url = file_path
+                params.video_materials.append(m)
+                persisted_local_materials.append(
+                    {"provider": m.provider, "url": m.url, "duration": m.duration}
+                )
+        st.session_state["local_video_materials"] = persisted_local_materials
+    elif params.video_source == "local" and st.session_state["local_video_materials"]:
+        params.video_materials = []
+        for material in st.session_state["local_video_materials"]:
+            m = MaterialInfo()
+            m.provider = material.get("provider", "local")
+            m.url = material.get("url", "")
+            m.duration = material.get("duration", 0)
+            if m.url:
+                params.video_materials.append(m)
+
+    log_container = st.empty()
+    log_records = []
+
+    def log_received(msg):
+        if config.ui["hide_log"]:
+            return
+        with log_container:
+            log_records.append(msg)
+            st.code("\n".join(log_records))
+
+    logger.add(log_received)
+
+    st.toast(tr("Generating Video"))
+    logger.info(tr("Start Generating Video"))
+    logger.info(utils.to_json(params))
+    scroll_to_bottom()
+
+    result = tm.start(task_id=task_id, params=params)
+    if not result or "videos" not in result:
+        st.error(tr("Video Generation Failed"))
+        logger.error(tr("Video Generation Failed"))
+        scroll_to_bottom()
+        st.stop()
+
+    video_files = result.get("videos", [])
+    st.success(tr("Video Generation Completed"))
+    try:
+        if video_files:
+            player_cols = st.columns(len(video_files) * 2 + 1)
+            for i, url in enumerate(video_files):
+                player_cols[i * 2 + 1].video(url)
+    except Exception:
+        pass
+
+    open_task_folder(task_id)
+    logger.info(tr("Video Generation Completed"))
+    scroll_to_bottom()
+
 
 # 加载语言文件
 locales = utils.load_locales(i18n_dir)
@@ -244,6 +575,45 @@ def scroll_to_bottom():
     st.components.v1.html(js, height=0, width=0)
 
 
+def request_nav(kind, label=""):
+    """记录一次导航请求；实际动作在页面末尾 apply_pending_nav() 统一执行(需先 rerun)。
+    kind="tab" 时按标签文字点击主 tab；kind="basic" 时展开顶部『基础设置』并滚到顶部。"""
+    st.session_state["_pending_nav"] = {"kind": kind, "label": label}
+    if kind == "basic":
+        st.session_state["open_basic_settings"] = True
+    st.rerun()
+
+
+def apply_pending_nav():
+    """在整页渲染完成后执行挂起的导航。放在脚本末尾，确保 tab 按钮已在 DOM 中。"""
+    nav = st.session_state.pop("_pending_nav", None)
+    if not nav:
+        return
+    if nav["kind"] == "tab":
+        # 页面中存在嵌套 st.tabs(基础设置内的 API 管理 / 高级设置)，不能按索引点击，
+        # 只能按主 tab 的可见标签文字匹配(这些标签唯一，不会与嵌套 tab 冲突)。
+        target = json.dumps(nav["label"])
+        js = f"""
+        <script>
+            const want = {target};
+            const doc = window.parent.document;
+            const tabs = Array.from(doc.querySelectorAll('button[role="tab"]'));
+            const btn = tabs.find(t => t.innerText.trim() === want);
+            if (btn) {{ btn.click(); }}
+        </script>
+        """
+        st.components.v1.html(js, height=0, width=0)
+    elif nav["kind"] == "basic":
+        js = """
+        <script>
+            const doc = window.parent.document;
+            const secs = doc.querySelectorAll('section.main');
+            for (let i = 0; i < secs.length; i++) { secs[i].scrollTop = 0; }
+        </script>
+        """
+        st.components.v1.html(js, height=0, width=0)
+
+
 def init_log():
     logger.remove()
     _lvl = "DEBUG"
@@ -317,7 +687,7 @@ def get_groq_model_ids(api_key: str, base_url: str) -> list[str]:
 
 # 创建基础设置折叠框
 if not config.app.get("hide_config", False):
-    with st.expander(tr("Basic Settings"), expanded=False):
+    with st.expander(tr("Basic Settings"), expanded=st.session_state.get("open_basic_settings", False)):
         config_panels = st.columns(3)
         left_config_panel = config_panels[0]
         middle_config_panel = config_panels[1]
@@ -727,46 +1097,37 @@ if not config.app.get("hide_config", False):
                 if st_llm_account_id:
                     config.app[f"{llm_provider}_account_id"] = st_llm_account_id
 
-        # 右侧面板 - API 密钥设置
+        # 右侧面板 - 视频源 API 密钥
         with right_config_panel:
-
-            def get_keys_from_config(cfg_key):
-                api_keys = config.app.get(cfg_key, [])
-                if isinstance(api_keys, str):
-                    api_keys = [api_keys]
-                api_key = ", ".join(api_keys)
-                return api_key
-
-            def save_keys_to_config(cfg_key, value):
-                value = value.replace(" ", "")
-                if value:
-                    config.app[cfg_key] = value.split(",")
-
             st.write(tr("Video Source Settings"))
 
-            pexels_api_key = get_keys_from_config("pexels_api_keys")
-            pexels_api_key = st.text_input(
-                tr("Pexels API Key"), value=pexels_api_key, type="password"
+            # AI 生成 (Seedance / 火山方舟) 的 API Key。单个 Bearer key，
+            # 与图库 key 一起在此管理。留空时后端回退到 volcengine_api_key。
+            seedance_key = config.app.get("seedance_api_key", "") or ""
+            seedance_key_new = st.text_input(
+                tr("Seedance API Key"),
+                value=seedance_key,
+                type="password",
+                key="seedance_api_key_input",
+                help=tr("Seedance API Key Help"),
             )
-            save_keys_to_config("pexels_api_keys", pexels_api_key)
+            if seedance_key_new.strip() != seedance_key:
+                config.app["seedance_api_key"] = seedance_key_new.strip()
+                config.save_config()
 
-            pixabay_api_key = get_keys_from_config("pixabay_api_keys")
-            pixabay_api_key = st.text_input(
-                tr("Pixabay API Key"), value=pixabay_api_key, type="password"
-            )
-            save_keys_to_config("pixabay_api_keys", pixabay_api_key)
-
-            coverr_api_key = get_keys_from_config("coverr_api_keys")
-            coverr_api_key = st.text_input(
-                tr("Coverr API Key"), value=coverr_api_key, type="password"
-            )
-            save_keys_to_config("coverr_api_keys", coverr_api_key)
+            st.divider()
+            # 图库素材 API 管理（Pexels/Pixabay/Coverr 增删列表）
+            render_api_key_management()
 
 llm_provider = config.app.get("llm_provider", "").lower()
-panel = st.columns(3)
-left_panel = panel[0]
-middle_panel = panel[1]
-right_panel = panel[2]
+# 设置项较多，改用 tab 分组更清爽：文案 / 视频 / 音频·字幕。
+# 保留 left/middle/right_panel 变量名，使下方三个 with 块无需改动。
+tab_script, tab_video, tab_audio, tab_output = st.tabs(
+    [tr("Tab Script"), tr("Tab Video"), tr("Tab Audio Subtitle"), tr("Tab Output")]
+)
+left_panel = tab_script
+middle_panel = tab_video
+right_panel = tab_audio
 
 params = VideoParams(video_subject="")
 params.match_materials_to_script = bool(
@@ -774,6 +1135,10 @@ params.match_materials_to_script = bool(
 )
 uploaded_files = []
 uploaded_audio_file = None
+# video_source 在中面板才选择(渲染在左面板之后)；这里先读已保存值，用于在
+# 左面板提前隐藏 AI 途径用不到的关键词控件。中面板检测到选择变化会立即 st.rerun()，
+# 保证本轮左面板与新 source 一致(不会出现要切两次才生效)。
+is_ai_saved = config.app.get("video_source") == "ai"
 
 with left_panel:
     with st.container(border=True):
@@ -834,9 +1199,9 @@ with left_panel:
             else:
                 params.custom_system_prompt = ""
 
-        if st.button(
-            tr("Generate Video Script and Keywords"), key="auto_generate_script"
-        ):
+        # 生成脚本按钮：AI 途径只生成文案，不生成关键词(关键词仅用于图库素材检索)。
+        script_btn_label = tr("Generate Video Script") if is_ai_saved else tr("Generate Video Script and Keywords")
+        if st.button(script_btn_label, key="auto_generate_script"):
             with st.spinner(tr("Generating Video Script and Keywords")):
                 script = llm.generate_script(
                     video_subject=params.video_subject,
@@ -845,42 +1210,46 @@ with left_panel:
                     video_script_prompt=params.video_script_prompt,
                     custom_system_prompt=params.custom_system_prompt,
                 )
-                terms = llm.generate_terms(
-                    params.video_subject,
-                    script,
-                    amount=8 if params.match_materials_to_script else 5,
-                    match_script_order=params.match_materials_to_script,
-                )
                 if "Error: " in script:
                     st.error(tr(script))
-                elif "Error: " in terms:
-                    st.error(tr(terms))
                 else:
                     st.session_state["video_script"] = script
-                    st.session_state["video_terms"] = ", ".join(terms)
+                    if not is_ai_saved:
+                        terms = llm.generate_terms(
+                            params.video_subject,
+                            script,
+                            amount=8 if params.match_materials_to_script else 5,
+                            match_script_order=params.match_materials_to_script,
+                        )
+                        if "Error: " in terms:
+                            st.error(tr(terms))
+                        else:
+                            st.session_state["video_terms"] = ", ".join(terms)
         params.video_script = st.text_area(
             tr("Video Script"), value=st.session_state["video_script"], height=280
         )
-        if st.button(tr("Generate Video Keywords"), key="auto_generate_terms"):
-            if not params.video_script:
-                st.error(tr("Please Enter the Video Subject"))
-                st.stop()
+        # 关键词按钮 + 关键词框：仅图库素材检索途径需要，AI 途径隐藏。
+        if not is_ai_saved:
+            if st.button(tr("Generate Video Keywords"), key="auto_generate_terms"):
+                if not params.video_script:
+                    st.error(tr("Please Enter the Video Subject"))
+                    st.stop()
 
-            with st.spinner(tr("Generating Video Keywords")):
-                terms = llm.generate_terms(
-                    params.video_subject,
-                    params.video_script,
-                    amount=8 if params.match_materials_to_script else 5,
-                    match_script_order=params.match_materials_to_script,
-                )
-                if "Error: " in terms:
-                    st.error(tr(terms))
-                else:
-                    st.session_state["video_terms"] = ", ".join(terms)
+                with st.spinner(tr("Generating Video Keywords")):
+                    terms = llm.generate_terms(
+                        params.video_subject,
+                        params.video_script,
+                        amount=8 if params.match_materials_to_script else 5,
+                        match_script_order=params.match_materials_to_script,
+                    )
+                    if "Error: " in terms:
+                        st.error(tr(terms))
+                    else:
+                        st.session_state["video_terms"] = ", ".join(terms)
 
-        params.video_terms = st.text_area(
-            tr("Video Keywords"), value=st.session_state["video_terms"]
-        )
+            params.video_terms = st.text_area(
+                tr("Video Keywords"), value=st.session_state["video_terms"]
+            )
 
 with middle_panel:
     with st.container(border=True):
@@ -894,6 +1263,7 @@ with middle_panel:
             (tr("Pixabay"), "pixabay"),
             (tr("Coverr"), "coverr"),
             (tr("Local file"), "local"),
+            (tr("AI Generation (Seedance)"), "ai"),
             (tr("TikTok"), "douyin"),
             (tr("Bilibili"), "bilibili"),
             (tr("Xiaohongshu"), "xiaohongshu"),
@@ -912,6 +1282,13 @@ with middle_panel:
         )
         params.video_source = video_sources[selected_index][1]
         config.app["video_source"] = params.video_source
+        # 顶部的 is_ai_saved 在本轮之初读取的是旧的 video_source，用于左面板提前隐藏
+        # AI 途径无关控件。若本轮选择发生了变化，左面板已按旧值渲染完毕，必须立刻
+        # rerun 一次，让整页用新值从头渲染，否则要切两次才生效。
+        if params.video_source != saved_video_source_name:
+            st.rerun()
+        # AI 途径不走图库检索/拼接那套，以下与素材检索相关的控件对它无意义，需隐藏。
+        is_ai = params.video_source == "ai"
 
         if params.video_source == "local":
             # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。
@@ -922,38 +1299,40 @@ with middle_panel:
                 accept_multiple_files=True,
             )
 
-        selected_index = st.selectbox(
-            tr("Video Concat Mode"),
-            index=1,
-            options=range(
-                len(video_concat_modes)
-            ),  # Use the index as the internal option value
-            format_func=lambda x: video_concat_modes[x][
-                0
-            ],  # The label is displayed to the user
-        )
-        params.video_concat_mode = VideoConcatMode(
-            video_concat_modes[selected_index][1]
-        )
+        # 拼接模式 / 转场模式：仅图库/本地素材途径需要；AI 按分镜顺序拼接，隐藏。
+        if not is_ai:
+            selected_index = st.selectbox(
+                tr("Video Concat Mode"),
+                index=1,
+                options=range(
+                    len(video_concat_modes)
+                ),  # Use the index as the internal option value
+                format_func=lambda x: video_concat_modes[x][
+                    0
+                ],  # The label is displayed to the user
+            )
+            params.video_concat_mode = VideoConcatMode(
+                video_concat_modes[selected_index][1]
+            )
 
-        # 视频转场模式
-        video_transition_modes = [
-            (tr("None"), VideoTransitionMode.none.value),
-            (tr("Shuffle"), VideoTransitionMode.shuffle.value),
-            (tr("FadeIn"), VideoTransitionMode.fade_in.value),
-            (tr("FadeOut"), VideoTransitionMode.fade_out.value),
-            (tr("SlideIn"), VideoTransitionMode.slide_in.value),
-            (tr("SlideOut"), VideoTransitionMode.slide_out.value),
-        ]
-        selected_index = st.selectbox(
-            tr("Video Transition Mode"),
-            options=range(len(video_transition_modes)),
-            format_func=lambda x: video_transition_modes[x][0],
-            index=0,
-        )
-        params.video_transition_mode = VideoTransitionMode(
-            video_transition_modes[selected_index][1]
-        )
+            # 视频转场模式
+            video_transition_modes = [
+                (tr("None"), VideoTransitionMode.none.value),
+                (tr("Shuffle"), VideoTransitionMode.shuffle.value),
+                (tr("FadeIn"), VideoTransitionMode.fade_in.value),
+                (tr("FadeOut"), VideoTransitionMode.fade_out.value),
+                (tr("SlideIn"), VideoTransitionMode.slide_in.value),
+                (tr("SlideOut"), VideoTransitionMode.slide_out.value),
+            ]
+            selected_index = st.selectbox(
+                tr("Video Transition Mode"),
+                options=range(len(video_transition_modes)),
+                format_func=lambda x: video_transition_modes[x][0],
+                index=0,
+            )
+            params.video_transition_mode = VideoTransitionMode(
+                video_transition_modes[selected_index][1]
+            )
 
         video_aspect_ratios = [
             (tr("Portrait"), VideoAspect.portrait.value),
@@ -979,23 +1358,26 @@ with middle_panel:
         )
         params.video_aspect = VideoAspect(video_aspect_ratios[selected_index][1])
 
-        params.video_clip_duration = st.selectbox(
-            tr("Clip Duration"), options=[2, 3, 4, 5, 6, 7, 8, 9, 10], index=1
-        )
-        params.video_count = st.selectbox(
-            tr("Number of Videos Generated Simultaneously"),
-            options=[1, 2, 3, 4, 5],
-            index=0,
-        )
-
-        with st.expander(tr("Advanced Video Settings"), expanded=False):
-            # 默认关闭，避免影响老用户的随机素材体验。开启后只改变关键词和素材
-            # 下载/拼接顺序，用于改善画面主题早于或晚于旁白的问题。
-            params.match_materials_to_script = st.checkbox(
-                tr("Match Materials to Script Order"),
-                help=tr("Match Materials to Script Order Help"),
-                key="match_materials_to_script",
+        # 片段时长 / 同时生成数量 / 素材顺序匹配：均为图库素材途径概念；
+        # AI 途径时长由分镜决定、单条输出、无素材检索，故隐藏。
+        if not is_ai:
+            params.video_clip_duration = st.selectbox(
+                tr("Clip Duration"), options=[2, 3, 4, 5, 6, 7, 8, 9, 10], index=1
             )
+            params.video_count = st.selectbox(
+                tr("Number of Videos Generated Simultaneously"),
+                options=[1, 2, 3, 4, 5],
+                index=0,
+            )
+
+            with st.expander(tr("Advanced Video Settings"), expanded=False):
+                # 默认关闭，避免影响老用户的随机素材体验。开启后只改变关键词和素材
+                # 下载/拼接顺序，用于改善画面主题早于或晚于旁白的问题。
+                params.match_materials_to_script = st.checkbox(
+                    tr("Match Materials to Script Order"),
+                    help=tr("Match Materials to Script Order Help"),
+                    key="match_materials_to_script",
+                )
             config.app["match_materials_to_script"] = params.match_materials_to_script
 
             video_codec_options = [
@@ -1019,6 +1401,13 @@ with middle_panel:
                 help=tr("Video Encoder Help"),
             )
             config.app["video_codec"] = video_codec_options[selected_codec_index][1]
+
+    # AI 分镜工作台：并入「视频设置」tab（①生成分镜 + 编辑分镜表）；实际出片在「生成/输出」tab。
+    if params.video_source == "ai":
+        render_ai_workspace(params)
+
+# 音频设置移入「音频 / 字幕」tab（原本与视频同列，tab 化后归到音频·字幕 tab）
+with right_panel:
     with st.container(border=True):
         st.write(tr("Audio Settings"))
 
@@ -1567,219 +1956,43 @@ with right_panel:
             config.ui["rounded_subtitle_background"] = (
                 params.rounded_subtitle_background
             )
-    with st.expander(tr("Click to show API Key management"), expanded=False):
-        st.subheader(tr("Manage Pexels, Pixabay and Coverr API Keys"))
 
-        col1, col2, col3 = st.tabs([
-            tr("Pexels API Keys"),
-            tr("Pixabay API Keys"),
-            tr("Coverr API Keys"),
-        ])
-
-        with col1:
-            st.subheader(tr("Pexels API Keys"))
-            if config.app["pexels_api_keys"]:
-                st.write(tr("Current Keys:"))
-                for key in config.app["pexels_api_keys"]:
-                    st.code(key)
+# ===== 生成 / 输出 tab：出片按钮 + 实时日志 + 结果视频（点击即在本 tab 内可见）=====
+with tab_output:
+    st.subheader(tr("Generate and Output"))
+    # 出片前置条件清单：满足=绿色✅，不满足=红色❌；全部满足才可点「生成视频」。
+    st.write(tr("Checklist before generating"))
+    _conditions = generation_conditions(params)
+    # 每个条件对应去哪里满足：'script'/'video' 跳主 tab(按标签文字)，'basic' 展开顶部基础设置。
+    _target_tab_label = {
+        "script": tr("Tab Script"),
+        "video": tr("Tab Video"),
+        "audio": tr("Tab Audio Subtitle"),
+    }
+    for _i, _cond in enumerate(_conditions):
+        _row_txt, _row_btn = st.columns([5, 1])
+        with _row_txt:
+            if _cond["met"]:
+                st.markdown(f"✅ :green[{_cond['label']}]")
             else:
-                st.info(tr("No Pexels API Keys currently"))
-
-            new_key = st.text_input(tr("Add Pexels API Key"), key="pexels_new_key")
-            if st.button(tr("Add Pexels API Key")):
-                if new_key and new_key not in config.app["pexels_api_keys"]:
-                    config.app["pexels_api_keys"].append(new_key)
-                    config.save_config()
-                    st.success(tr("Pexels API Key added successfully"))
-                elif new_key in config.app["pexels_api_keys"]:
-                    st.warning(tr("This API Key already exists"))
+                st.markdown(f"❌ :red[{_cond['label']}]")
+        with _row_btn:
+            if st.button(tr("Go To"), key=f"goto_cond_{_i}", use_container_width=True):
+                if _cond["target"] == "basic":
+                    request_nav("basic")
                 else:
-                    st.error(tr("Please enter a valid API Key"))
-
-            if config.app["pexels_api_keys"]:
-                delete_key = st.selectbox(
-                    tr("Select Pexels API Key to delete"), config.app["pexels_api_keys"], key="pexels_delete_key"
-                )
-                if st.button(tr("Delete Selected Pexels API Key")):
-                    config.app["pexels_api_keys"].remove(delete_key)
-                    config.save_config()
-                    st.success(tr("Pexels API Key deleted successfully"))
-
-        with col2:
-            st.subheader(tr("Pixabay API Keys"))
-
-            if config.app["pixabay_api_keys"]:
-                st.write(tr("Current Keys:"))
-                for key in config.app["pixabay_api_keys"]:
-                    st.code(key)
-            else:
-                st.info(tr("No Pixabay API Keys currently"))
-
-            new_key = st.text_input(tr("Add Pixabay API Key"), key="pixabay_new_key")
-            if st.button(tr("Add Pixabay API Key")):
-                if new_key and new_key not in config.app["pixabay_api_keys"]:
-                    config.app["pixabay_api_keys"].append(new_key)
-                    config.save_config()
-                    st.success(tr("Pixabay API Key added successfully"))
-                elif new_key in config.app["pixabay_api_keys"]:
-                    st.warning(tr("This API Key already exists"))
-                else:
-                    st.error(tr("Please enter a valid API Key"))
-
-            if config.app["pixabay_api_keys"]:
-                delete_key = st.selectbox(
-                    tr("Select Pixabay API Key to delete"), config.app["pixabay_api_keys"], key="pixabay_delete_key"
-                )
-                if st.button(tr("Delete Selected Pixabay API Key")):
-                    config.app["pixabay_api_keys"].remove(delete_key)
-                    config.save_config()
-                    st.success(tr("Pixabay API Key deleted successfully"))
-
-        with col3:
-            st.subheader(tr("Coverr API Keys"))
-
-            # 与 pexels/pixabay 不同,coverr_api_keys 是 PR 新增配置项,
-            # 老用户的 config.toml 不一定包含,这里先兜底初始化为空列表,
-            # 防止下面 .append / 索引访问触发 KeyError。
-            if "coverr_api_keys" not in config.app or config.app["coverr_api_keys"] is None:
-                config.app["coverr_api_keys"] = []
-
-            if config.app["coverr_api_keys"]:
-                st.write(tr("Current Keys:"))
-                for key in config.app["coverr_api_keys"]:
-                    st.code(key)
-            else:
-                st.info(tr("No Coverr API Keys currently"))
-
-            new_key = st.text_input(tr("Add Coverr API Key"), key="coverr_new_key")
-            if st.button(tr("Add Coverr API Key")):
-                if new_key and new_key not in config.app["coverr_api_keys"]:
-                    config.app["coverr_api_keys"].append(new_key)
-                    config.save_config()
-                    st.success(tr("Coverr API Key added successfully"))
-                elif new_key in config.app["coverr_api_keys"]:
-                    st.warning(tr("This API Key already exists"))
-                else:
-                    st.error(tr("Please enter a valid API Key"))
-
-            if config.app["coverr_api_keys"]:
-                delete_key = st.selectbox(
-                    tr("Select Coverr API Key to delete"), config.app["coverr_api_keys"], key="coverr_delete_key"
-                )
-                if st.button(tr("Delete Selected Coverr API Key")):
-                    config.app["coverr_api_keys"].remove(delete_key)
-                    config.save_config()
-                    st.success(tr("Coverr API Key deleted successfully"))
-
-start_button = st.button(tr("Generate Video"), use_container_width=True, type="primary")
-if start_button:
-    config.save_config()
-    task_id = str(uuid4())
-    if not params.video_subject and not params.video_script:
-        st.error(tr("Video Script and Subject Cannot Both Be Empty"))
-        scroll_to_bottom()
-        st.stop()
-
-    if params.video_source not in ["pexels", "pixabay", "coverr", "local"]:
-        st.error(tr("Please Select a Valid Video Source"))
-        scroll_to_bottom()
-        st.stop()
-
-    if params.video_source == "pexels" and not config.app.get("pexels_api_keys", ""):
-        st.error(tr("Please Enter the Pexels API Key"))
-        scroll_to_bottom()
-        st.stop()
-
-    if params.video_source == "pixabay" and not config.app.get("pixabay_api_keys", ""):
-        st.error(tr("Please Enter the Pixabay API Key"))
-        scroll_to_bottom()
-        st.stop()
-
-    if params.video_source == "coverr" and not config.app.get("coverr_api_keys", ""):
-        st.error(tr("Please Enter the Coverr API Key"))
-        scroll_to_bottom()
-        st.stop()
-
-    if uploaded_audio_file:
-        task_dir = utils.task_dir(task_id)
-        # 上传文件名来自浏览器，不能直接拼到磁盘路径里；这里只保留扩展名，
-        # 并使用固定文件名保存到当前任务目录，避免路径穿越或特殊字符问题。
-        _, audio_ext = os.path.splitext(os.path.basename(uploaded_audio_file.name))
-        audio_ext = audio_ext.lower() or ".mp3"
-        custom_audio_path = os.path.join(task_dir, f"custom-audio{audio_ext}")
-        with open(custom_audio_path, "wb") as f:
-            f.write(uploaded_audio_file.getbuffer())
-        params.custom_audio_file = custom_audio_path
-
-    if uploaded_files:
-        local_videos_dir = utils.storage_dir("local_videos", create=True)
-        # 每次重新上传时都以本次选择的素材为准，避免旧素材不断重复追加。
-        params.video_materials = []
-        persisted_local_materials = []
-        for file in uploaded_files:
-            file_path = os.path.join(local_videos_dir, f"{file.file_id}_{file.name}")
-            with open(file_path, "wb") as f:
-                f.write(file.getbuffer())
-                m = MaterialInfo()
-                m.provider = "local"
-                m.url = file_path
-                params.video_materials.append(m)
-                persisted_local_materials.append(
-                    {
-                        "provider": m.provider,
-                        "url": m.url,
-                        "duration": m.duration,
-                    }
-                )
-        # 将已上传并保存到本地的视频素材写入会话，供后续只改文案时直接复用。
-        st.session_state["local_video_materials"] = persisted_local_materials
-    elif params.video_source == "local" and st.session_state["local_video_materials"]:
-        # 当用户没有重新上传文件时，复用最近一次已经保存到磁盘的本地素材列表。
-        params.video_materials = []
-        for material in st.session_state["local_video_materials"]:
-            m = MaterialInfo()
-            m.provider = material.get("provider", "local")
-            m.url = material.get("url", "")
-            m.duration = material.get("duration", 0)
-            if m.url:
-                params.video_materials.append(m)
-
-    log_container = st.empty()
-    log_records = []
-
-    def log_received(msg):
-        if config.ui["hide_log"]:
-            return
-        with log_container:
-            log_records.append(msg)
-            st.code("\n".join(log_records))
-
-    logger.add(log_received)
-
-    st.toast(tr("Generating Video"))
-    logger.info(tr("Start Generating Video"))
-    logger.info(utils.to_json(params))
-    scroll_to_bottom()
-
-    result = tm.start(task_id=task_id, params=params)
-    if not result or "videos" not in result:
-        st.error(tr("Video Generation Failed"))
-        logger.error(tr("Video Generation Failed"))
-        scroll_to_bottom()
-        st.stop()
-
-    video_files = result.get("videos", [])
-    st.success(tr("Video Generation Completed"))
-    try:
-        if video_files:
-            player_cols = st.columns(len(video_files) * 2 + 1)
-            for i, url in enumerate(video_files):
-                player_cols[i * 2 + 1].video(url)
-    except Exception:
-        pass
-
-    open_task_folder(task_id)
-    logger.info(tr("Video Generation Completed"))
-    scroll_to_bottom()
+                    request_nav("tab", _target_tab_label.get(_cond["target"], ""))
+    _all_met = all(_c["met"] for _c in _conditions)
+    if st.button(
+        tr("Generate Video"),
+        use_container_width=True,
+        type="primary",
+        key="generate_video_btn",
+        disabled=not _all_met,
+    ):
+        run_generation(params, uploaded_audio_file, uploaded_files)
 
 config.save_config()
+
+# 出片清单『前往』按钮的挂起导航，须在整页(含所有 tab 按钮)渲染完成后执行。
+apply_pending_nav()

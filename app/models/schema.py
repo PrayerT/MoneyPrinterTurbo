@@ -80,11 +80,19 @@ class VideoParams(BaseModel):
     match_materials_to_script: bool = False
     video_count: Optional[int] = 1
 
-    video_source: Optional[str] = "pexels"
+    video_source: Optional[str] = "pexels"  # "pexels"/"pixabay"/"local"/"ai"(Seedance 分镜生成)
     video_materials: Optional[List[MaterialInfo]] = (
         None  # Materials used to generate the video
     )
-    
+
+    # ---- AI 分镜管线(video_source == "ai") ----
+    # 主角参考图(本地路径或URL)，用于 Seedance reference_image 保持全片角色一致。
+    seedance_reference_image: Optional[str] = ""
+    # 主角设定文本；留空且给了参考图时，由视觉模型自动分析该图得出。
+    character_description: Optional[str] = ""
+    # 用户调整后回传的分镜(两阶段生成)；给定则跳过 LLM 分镜直接用它出片。
+    video_storyboard: Optional[list] = None
+
     custom_audio_file: Optional[str] = None  # Custom audio file path, will ignore TTS and can still use Whisper subtitles
     video_language: Optional[str] = ""  # auto detect
 

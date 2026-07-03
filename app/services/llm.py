@@ -637,6 +637,7 @@ def build_script_prompt(
     paragraph_number: int = 1,
     video_script_prompt: str = "",
     custom_system_prompt: str = "",
+    character_description: str = "",
 ) -> str:
     paragraph_number = _normalize_script_paragraph_number(paragraph_number)
     video_script_prompt = _limit_script_text(
@@ -657,6 +658,16 @@ def build_script_prompt(
 """.rstrip()
     if language:
         prompt += f"\n- language: {language}"
+    if character_description.strip():
+        # 主角设定来自参考图分析，文案必须围绕这些固定主角展开，
+        # 使旁白与后续每个镜头的主角画面保持一致。
+        prompt += f"""
+
+# Protagonist(s):
+The video features the following fixed protagonist(s). Write the script around
+them; the narrative must be about these specific characters:
+{character_description.strip()}
+""".rstrip()
     if video_script_prompt:
         prompt += f"""
 
@@ -673,6 +684,7 @@ def generate_script(
     paragraph_number: int = 1,
     video_script_prompt: str = "",
     custom_system_prompt: str = "",
+    character_description: str = "",
 ) -> str:
     paragraph_number = _normalize_script_paragraph_number(paragraph_number)
     video_script_prompt = _limit_script_text(
@@ -687,6 +699,7 @@ def generate_script(
         paragraph_number=paragraph_number,
         video_script_prompt=video_script_prompt,
         custom_system_prompt=custom_system_prompt,
+        character_description=character_description,
     )
     final_script = ""
     logger.info(
@@ -860,6 +873,256 @@ Please note that you must use English for generating video search terms; Chinese
 
     logger.success(f"completed: \n{search_terms}")
     return search_terms
+
+
+# =============================================================================
+# Reference-image analysis (主角图片分析) for the AI generation pipeline
+#
+# 用视觉模型分析用户上传的主角参考图，得出「主角档案」(数量 + 外观描述)。
+# 该档案是 AI 管线的一等输入：既驱动文案(围绕主角写)，又驱动分镜(每镜头带主角)。
+# 走火山方舟(ARK)多模态接口(doubao 视觉)，与 Seedance 共用同一个 ARK API Key，
+# 不受 llm_provider(可能是 deepseek 等非视觉模型)影响。
+# =============================================================================
+
+
+def _get_ark_vision_config():
+    api_key = (
+        config.app.get("seedance_api_key")
+        or config.app.get("volcengine_api_key")
+        or ""
+    ).strip()
+    base_url = (
+        config.app.get("seedance_base_url")
+        or config.app.get("volcengine_base_url")
+        or "https://ark.cn-beijing.volces.com/api/v3"
+    ).rstrip("/")
+    model = (
+        config.app.get("seedance_vision_model")
+        or config.app.get("volcengine_model_name")
+        or "doubao-seed-2-1-turbo-260628"
+    )
+    return api_key, base_url, model
+
+
+def analyze_reference_image(image_url: str) -> dict:
+    """
+    分析主角参考图，返回 {"count": int, "description": str}。
+
+    image_url 可以是 http(s) URL 或 data URL(base64)。失败返回
+    {"count": 0, "description": ""}，由上层决定是否降级(如让用户手填/走无主角)。
+    """
+    api_key, base_url, model = _get_ark_vision_config()
+    if not api_key or not image_url:
+        logger.warning("analyze_reference_image: missing ARK api_key or image")
+        return {"count": 0, "description": ""}
+
+    instruction = (
+        "分析这张图里的主角。只关注主体角色(如动物/人物)，忽略背景环境。"
+        '用 JSON 回答：{"count": 主角数量(整数), '
+        '"description": "主角外观的简洁中文描述；若有多个主角，分别描述并给出可区分的特征"}。'
+        "只返回 JSON，不要任何解释或 markdown。"
+    )
+    body = {
+        "model": model,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": instruction},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+        ],
+        "temperature": 0.3,
+    }
+    try:
+        resp = requests.post(
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
+            proxies=config.proxy,
+            timeout=(30, 90),
+        )
+        data = resp.json()
+        if "choices" not in data:
+            logger.error(f"analyze_reference_image failed: {utils_to_json_safe(data)}")
+            return {"count": 0, "description": ""}
+        content = data["choices"][0]["message"]["content"]
+        parsed = json.loads(_strip_code_fence(content))
+        count = int(parsed.get("count", 0) or 0)
+        description = str(parsed.get("description", "")).strip()
+        logger.success(f"analyzed reference image: count={count}, desc={description[:60]}")
+        return {"count": count, "description": description}
+    except Exception as e:
+        logger.warning(f"analyze_reference_image error: {str(e)}")
+        return {"count": 0, "description": ""}
+
+
+def utils_to_json_safe(obj) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False)[:400]
+    except Exception:
+        return str(obj)[:400]
+
+
+# =============================================================================
+# Storyboard (分镜) for the AI generation pipeline
+#
+# 把文案拆成一系列连续镜头，每个镜头给出：旁白文本、画面描述(喂给 Seedance
+# 等文生视频模型)、以及建议时长。分镜时长是 AI 管线的主时钟——视频按此时长
+# 精确生成、旁白适配到该时长，从而让画面与旁白逐镜头语义对齐。
+# =============================================================================
+
+# 与 Seedance 单镜头时长限制保持一致（整数秒）。
+SHOT_DURATION_MIN = 4
+SHOT_DURATION_MAX = 15
+
+
+def _estimate_shot_duration(narration: str) -> int:
+    """按文本长度粗估朗读时长(秒)，作为模型未给出合理 duration 时的兜底。"""
+    text = (narration or "").strip()
+    if not text:
+        return SHOT_DURATION_MIN
+    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    others = len(text) - cjk
+    # 中文约每秒 4.5 字；其余按每秒约 3 个“词单位”(以空格/字符粗估)。
+    seconds = cjk / 4.5 + max(others, 0) / 15.0
+    value = int(round(seconds)) or SHOT_DURATION_MIN
+    return max(SHOT_DURATION_MIN, min(SHOT_DURATION_MAX, value))
+
+
+def _normalize_storyboard(raw_shots) -> List[dict]:
+    """校验并归一化模型返回的分镜：过滤非法项、裁剪时长、重排 index。"""
+    shots = []
+    if not isinstance(raw_shots, list):
+        return shots
+    for item in raw_shots:
+        if not isinstance(item, dict):
+            continue
+        narration = str(item.get("narration", "")).strip()
+        visual_prompt = str(item.get("visual_prompt", "")).strip()
+        if not narration or not visual_prompt:
+            continue
+        duration = item.get("duration")
+        try:
+            duration = int(round(float(duration)))
+        except (TypeError, ValueError):
+            duration = _estimate_shot_duration(narration)
+        duration = max(SHOT_DURATION_MIN, min(SHOT_DURATION_MAX, duration))
+        shots.append(
+            {
+                "index": len(shots) + 1,
+                "narration": narration,
+                "visual_prompt": visual_prompt,
+                "duration": duration,
+            }
+        )
+    return shots
+
+
+def generate_storyboard(
+    video_script: str,
+    video_subject: str = "",
+    language: str = "",
+    character_description: str = "",
+    max_shot_seconds: int = SHOT_DURATION_MAX,
+) -> List[dict]:
+    """
+    把文案拆成分镜列表：[{index, narration, visual_prompt, duration}, ...]。
+
+    - narration: 各镜头旁白，拼接起来等于完整文案，保持原文案语言。
+    - visual_prompt: 面向文生视频模型的画面描述（中文即可）。
+    - duration: 建议时长（整数秒，4~15），供用户后续调整。
+    - character_description: 可选的主角设定（支持多主角）。给定后，每个镜头的
+      画面描述都会围绕这些固定主角展开，配合参考图实现全片角色一致。
+    失败重试后仍无有效分镜则返回空列表，由上层判定任务失败。
+    """
+    language_hint = language.strip() if language else "the same language as the script"
+    # 镜头时长上限随视频后端(provider)而定：如通义万相固定 5s，需让分镜切成
+    # 更多更短的镜头，避免单镜头旁白装不下。
+    shot_max = max(SHOT_DURATION_MIN, min(int(max_shot_seconds or SHOT_DURATION_MAX), SHOT_DURATION_MAX))
+
+    character_section = ""
+    character_rule = ""
+    if character_description.strip():
+        character_section = (
+            "\n### Protagonist(s) (主角设定，全片固定)\n"
+            f"{character_description.strip()}\n"
+        )
+        character_rule = (
+            "4. Every shot's visual_prompt MUST feature the protagonist(s) "
+            "described above, keeping their appearance/identity consistent across "
+            "all shots. If there are multiple protagonists, make clear how many "
+            "appear in each shot."
+        )
+
+    prompt = f"""
+# Role: Short-Video Storyboard Director (短视频分镜师)
+
+## Task
+Split the given video script into a sequence of consecutive shots for an
+AI-video-generation + TTS-narration pipeline.
+
+## Fields per shot
+- narration: the spoken narration for this shot. It MUST be taken/adapted from
+  the original script in {language_hint}. Concatenating every shot's narration
+  in order must reconstruct the full script with no omission or duplication.
+- visual_prompt: a concrete, vivid visual description for a text-to-video model.
+  Write it in Chinese, <= 200 characters. Describe subject, action, scene,
+  lighting, camera movement and style. Do NOT include any on-screen text,
+  captions, watermarks, or real celebrities.
+- duration: this shot's length as an INTEGER number of seconds, between
+  {SHOT_DURATION_MIN} and {shot_max}, matching how long the narration
+  takes to read aloud (Chinese ~4-5 chars/sec).
+
+## Constraints
+1. Shots must follow the script's narrative order.
+2. Each shot's narration MUST be readable within {shot_max} seconds (about
+   {shot_max * 4} Chinese characters); if a passage is longer, split it into
+   multiple shots. Prefer more, shorter shots over fewer long ones.
+3. Return ONLY a JSON array. No explanation, no markdown fences.
+{character_rule}
+
+## Output format (strict JSON)
+[{{"narration": "...", "visual_prompt": "...", "duration": 6}}]
+
+## Context
+### Video Subject
+{video_subject}
+{character_section}
+### Video Script
+{video_script}
+""".strip()
+
+    logger.info(f"generating storyboard, subject: {video_subject}, language: {language}")
+
+    shots = []
+    response = ""
+    for i in range(_max_retries):
+        try:
+            response = _generate_response(prompt)
+            if "Error: " in response:
+                logger.error(f"failed to generate storyboard: {response}")
+                return []
+            raw = json.loads(_strip_code_fence(response))
+            shots = _normalize_storyboard(raw)
+        except Exception as e:
+            logger.warning(f"failed to generate storyboard: {str(e)}")
+            if response:
+                match = re.search(r"\[.*]", response, re.DOTALL)
+                if match:
+                    try:
+                        shots = _normalize_storyboard(json.loads(match.group()))
+                    except Exception as e:
+                        logger.warning(f"failed to parse storyboard json: {str(e)}")
+
+        if shots:
+            break
+        if i < _max_retries:
+            logger.warning(f"failed to generate storyboard, trying again... {i + 1}")
+
+    logger.success(f"completed: {len(shots)} shots")
+    return shots
 
 
 # =============================================================================

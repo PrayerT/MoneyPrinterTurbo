@@ -8,7 +8,7 @@ from loguru import logger
 from app.config import config
 from app.models import const
 from app.models.schema import VideoConcatMode, VideoParams
-from app.services import llm, material, subtitle, twelvelabs, video, voice, upload_post
+from app.services import llm, material, storyboard, subtitle, twelvelabs, video, voice, upload_post
 from app.services import state as sm
 from app.utils import file_security, utils
 
@@ -332,6 +332,11 @@ def generate_final_videos(
 def start(task_id, params: VideoParams, stop_at: str = "video"):
     logger.info(f"start task: {task_id}, stop_at: {stop_at}")
     sm.state.update_task(task_id, state=const.TASK_STATE_PROCESSING, progress=5)
+
+    # AI 分镜管线：完整自持「图片分析(主角)→文案→分镜→逐镜头生成→合成」。
+    # 主角需从源头影响文案，故在生成文案之前就分流到独立编排。
+    if params.video_source == "ai":
+        return storyboard.start_ai(task_id, params, stop_at=stop_at)
 
     # 1. Generate script
     video_script = generate_script(task_id, params)
